@@ -1,0 +1,29 @@
+# =============================================================================
+# Local development overrides (auto-loaded by `docker compose up`)
+# Production VMs should remove this file or use:
+#   docker compose -f docker-compose.yml --profile production up -d
+# =============================================================================
+
+services:
+  gateway:
+    # Publish port for direct API testing from the host
+    ports:
+      - "${GATEWAY_PORT:-8000}:8000"
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
+      ENVIRONMENT: local
+    # Local stacks use mock-agent by default — wait for it
+    depends_on:
+      redis:
+        condition: service_healthy
+      mock-agent:
+        condition: service_started
+
+  open-webui:
+    ports:
+      - "${OPENWEBUI_PORT:-3000}:8080"
+
+  # Expose mock agent on host for manual testing (optional)
+  mock-agent:
+    ports:
+      - "9010:9010"

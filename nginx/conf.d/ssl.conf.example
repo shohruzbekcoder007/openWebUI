@@ -1,0 +1,75 @@
+# Rename to ssl.conf (or include) when certificates are ready.
+# Place fullchain.pem and privkey.pem under nginx/ssl/
+#
+# Example with Let's Encrypt:
+#   certbot certonly --webroot -w /var/www/certbot -d ai.example.com
+#   cp fullchain.pem privkey.pem ./nginx/ssl/
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name ai.example.com;  # set to ${BASE_DOMAIN} equivalent
+
+    ssl_certificate     /etc/nginx/ssl/fullchain.pem;
+    ssl_certificate_key /etc/nginx/ssl/privkey.pem;
+
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_tickets off;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers off;
+
+    # HSTS (enable only when HTTPS is permanent)
+    add_header Strict-Transport-Security "max-age=63072000" always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options SAMEORIGIN always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+
+    client_max_body_size 100m;
+
+    location /api/gateway/ {
+        rewrite ^/api/gateway/(.*)$ /$1 break;
+        proxy_pass http://gateway;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Authorization $http_authorization;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+    }
+
+    location / {
+        proxy_pass http://open_webui;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+        client_max_body_size 100m;
+    }
+}
+
+# Optional HTTP → HTTPS redirect (use instead of serving UI on :80)
+# server {
+#     listen 80;
+#     listen [::]:80;
+#     server_name ai.example.com;
+#     location ^~ /.well-known/acme-challenge/ {
+#         root /var/www/certbot;
+#     }
+#     location / {
+#         return 301 https://$host$request_uri;
+#     }
+# }

@@ -1,0 +1,39 @@
+# =============================================================================
+# Production overlay
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile production up -d
+#
+# Or on the VM, remove/rename docker-compose.override.yml and use production profile.
+# =============================================================================
+
+services:
+  gateway:
+    environment:
+      ENVIRONMENT: production
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    # Do not publish gateway publicly when nginx fronts the stack
+    ports: !reset []
+    expose:
+      - "8000"
+
+  open-webui:
+    environment:
+      ENVIRONMENT: production
+      ENABLE_SIGNUP: ${ENABLE_SIGNUP:-false}
+      WEBUI_AUTH: "true"
+    ports: !reset []
+    expose:
+      - "8080"
+
+  redis:
+    ports: !reset []
+    expose:
+      - "6379"
+
+  mock-agent:
+    # Disable mock agent in true production by scaling to 0:
+    #   docker compose ... up -d --scale mock-agent=0
+    profiles: ["dev-mock"]
+
+  nginx:
+    profiles: ["production"]

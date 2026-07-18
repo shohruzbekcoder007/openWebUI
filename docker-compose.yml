@@ -1,0 +1,283 @@
+# =============================================================================
+# Open WebUI + Hermes Gateway Platform
+# Local:      docker compose up
+#             docker compose watch
+# Production: docker compose --profile production up -d
+#
+# Same images/code for local and production — only .env differs.
+# =============================================================================
+
+name: ${COMPOSE_PROJECT_NAME:-openwebui-platform}
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: ${LOG_MAX_SIZE:-10m}
+    max-file: ${LOG_MAX_FILE:-5}
+
+x-restart: &default-restart
+  restart: unless-stopped
+
+networks:
+  platform:
+    driver: bridge
+    name: ${COMPOSE_PROJECT_NAME:-openwebui-platform}_net
+
+volumes:
+  open-webui-data:
+    name: ${COMPOSE_PROJECT_NAME:-openwebui-platform}_webui_data
+  redis-data:
+    name: ${COMPOSE_PROJECT_NAME:-openwebui-platform}_redis_data
+  postgres-data:
+    name: ${COMPOSE_PROJECT_NAME:-openwebui-platform}_postgres_data
+
+services:
+  # ---------------------------------------------------------------------------
+  # FastAPI Gateway — OpenAI-compatible API → Hermes Agents
+  # ---------------------------------------------------------------------------
+  gateway:
+    <<: *default-restart
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile
+    image: ${COMPOSE_PROJECT_NAME:-openwebui-platform}-gateway:latest
+    container_name: ${COMPOSE_PROJECT_NAME:-openwebui-platform}-gateway
+    env_file:
+      - .env
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-local}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      GATEWAY_HOST: ${GATEWAY_HOST:-0.0.0.0}
+      GATEWAY_PORT_INTERNAL: ${GATEWAY_PORT_INTERNAL:-8000}
+      GATEWAY_API_KEYS: ${GATEWAY_API_KEYS:-sk-gateway-dev-key}
+      JWT_SECRET: ${JWT_SECRET:-change-me-jwt-secret}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      RATE_LIMIT_RPM: ${RATE_LIMIT_RPM:-120}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      AGENTS_CONFIG_PATH: ${AGENTS_CONFIG_PATH:-/app/config/agents.yaml}
+      DEFAULT_AGENT_TIMEOUT: ${DEFAULT_AGENT_TIMEOUT:-120}
+      LOG_REQUEST_BODIES: ${LOG_REQUEST_BODIES:-false}
+      REDIS_ENABLED: ${REDIS_ENABLED:-true}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      ENABLE_MCP: ${ENABLE_MCP:-false}
+      ENABLE_RAG: ${ENABLE_RAG:-false}
+      # Hermes agent overrides (optional; also expandable in agents.yaml)
+      HERMES_ACCOUNTING_BASE_URL: ${HERMES_ACCOUNTING_BASE_URL:-http://mock-agent:9010}
+      HERMES_GIS_BASE_URL: ${HERMES_GIS_BASE_URL:-http://host.docker.internal:8080}
+      HERMES_STATISTICS_BASE_URL: ${HERMES_STATISTICS_BASE_URL:-http://mock-agent:9010}
+      HERMES_LEGAL_BASE_URL: ${HERMES_LEGAL_BASE_URL:-http://mock-agent:9010}
+      HERMES_PROGRAMMER_BASE_URL: ${HERMES_PROGRAMMER_BASE_URL:-http://mock-agent:9010}
+      HERMES_TRANSLATOR_BASE_URL: ${HERMES_TRANSLATOR_BASE_URL:-http://mock-agent:9010}
+      HERMES_ACCOUNTING_API_KEY: ${HERMES_ACCOUNTING_API_KEY:-}
+      HERMES_GIS_API_KEY: ${HERMES_GIS_API_KEY:-}
+      HERMES_STATISTICS_API_KEY: ${HERMES_STATISTICS_API_KEY:-}
+      HERMES_LEGAL_API_KEY: ${HERMES_LEGAL_API_KEY:-}
+      HERMES_PROGRAMMER_API_KEY: ${HERMES_PROGRAMMER_API_KEY:-}
+      HERMES_TRANSLATOR_API_KEY: ${HERMES_TRANSLATOR_API_KEY:-}
+      HERMES_ACCOUNTING_MODEL: ${HERMES_ACCOUNTING_MODEL:-accounting-default}
+      HERMES_GIS_MODEL: ${HERMES_GIS_MODEL:-gis-default}
+      HERMES_STATISTICS_MODEL: ${HERMES_STATISTICS_MODEL:-statistics-default}
+      HERMES_LEGAL_MODEL: ${HERMES_LEGAL_MODEL:-legal-default}
+      HERMES_PROGRAMMER_MODEL: ${HERMES_PROGRAMMER_MODEL:-programmer-default}
+      HERMES_TRANSLATOR_MODEL: ${HERMES_TRANSLATOR_MODEL:-translator-default}
+    volumes:
+      - ./config:/app/config:ro
+    ports:
+      - "${GATEWAY_PORT:-8000}:8000"
+    extra_hosts:
+      # Reach agents running on the Windows/macOS Docker host (e.g. :8080)
+      - "host.docker.internal:host-gateway"
+    networks:
+      - platform
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging: *default-logging
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./gateway/app
+          target: /app/app
+        - action: rebuild
+          path: ./gateway/requirements.txt
+        - action: sync+restart
+          path: ./config
+          target: /app/config
+
+  # ---------------------------------------------------------------------------
+  # Open WebUI — official image only (no source modifications)
+  # ---------------------------------------------------------------------------
+  open-webui:
+    <<: *default-restart
+    image: ${OPENWEBUI_IMAGE:-ghcr.io/open-webui/open-webui:main}
+    container_name: ${COMPOSE_PROJECT_NAME:-openwebui-platform}-open-webui
+    env_file:
+      - .env
+    environment:
+      # Secrets & auth
+      WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY:-change-me}
+      WEBUI_AUTH: ${WEBUI_AUTH:-true}
+      ENABLE_SIGNUP: ${ENABLE_SIGNUP:-true}
+      WEBUI_URL: ${WEBUI_URL:-http://localhost:3000}
+      TZ: ${TZ:-UTC}
+      # Connect ONLY to Gateway (Docker DNS name)
+      ENABLE_OPENAI_API: ${ENABLE_OPENAI_API:-true}
+      OPENAI_API_BASE_URL: ${OPENAI_API_BASE_URL:-http://gateway:8000/v1}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-sk-gateway-dev-key}
+      # Disable Ollama so models come exclusively from the Gateway
+      ENABLE_OLLAMA_API: ${ENABLE_OLLAMA_API:-false}
+      OLLAMA_BASE_URL: ""
+      MODELS_CACHE_TTL: ${MODELS_CACHE_TTL:-30}
+      RAG_FILE_MAX_SIZE: ${RAG_FILE_MAX_SIZE:-100}
+      # Avoid blocking startup on full HuggingFace snapshot downloads (onnx/tf/etc).
+      # First boot still needs essential model files once; after that stay local.
+      RAG_EMBEDDING_MODEL_AUTO_UPDATE: ${RAG_EMBEDDING_MODEL_AUTO_UPDATE:-false}
+      RAG_RERANKING_MODEL_AUTO_UPDATE: ${RAG_RERANKING_MODEL_AUTO_UPDATE:-false}
+      WHISPER_MODEL_AUTO_UPDATE: ${WHISPER_MODEL_AUTO_UPDATE:-false}
+      # Open WebUI DB — always a valid URL (empty string crashes SQLAlchemy).
+      # Default: Postgres service on the platform network (data in postgres-data volume).
+      # SQLite fallback: DATABASE_URL=sqlite:////app/backend/data/webui.db
+      DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-openwebui}:${POSTGRES_PASSWORD:-change-me-postgres-password}@postgres:5432/${POSTGRES_DB:-openwebui}}
+    volumes:
+      # Uploads, embeddings cache, vector_db (chat/users live in Postgres when DATABASE_URL is PG)
+      - open-webui-data:/app/backend/data
+    ports:
+      - "${OPENWEBUI_PORT:-3000}:8080"
+    networks:
+      - platform
+    depends_on:
+      gateway:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      # Official image may not include curl; use Python stdlib
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')\" || exit 1",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------------
+  # Redis — rate limiting / optional cache
+  # ---------------------------------------------------------------------------
+  redis:
+    <<: *default-restart
+    image: redis:7-alpine
+    container_name: ${COMPOSE_PROJECT_NAME:-openwebui-platform}-redis
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL — Open WebUI primary database (users, chats, settings)
+  # Volume: postgres-data. Open WebUI connects via DATABASE_URL.
+  # ---------------------------------------------------------------------------
+  postgres:
+    <<: *default-restart
+    image: postgres:16-alpine
+    container_name: ${COMPOSE_PROJECT_NAME:-openwebui-platform}-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-openwebui}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-postgres-password}
+      POSTGRES_DB: ${POSTGRES_DB:-openwebui}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-openwebui} -d ${POSTGRES_DB:-openwebui}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------------
+  # Nginx reverse proxy — production profile
+  # ---------------------------------------------------------------------------
+  nginx:
+    <<: *default-restart
+    profiles: ["production"]
+    image: nginx:1.27-alpine
+    container_name: ${COMPOSE_PROJECT_NAME:-openwebui-platform}-nginx
+    ports:
+      - "${NGINX_HTTP_PORT:-80}:80"
+      - "${NGINX_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./nginx/templates:/etc/nginx/templates:ro
+    environment:
+      BASE_DOMAIN: ${BASE_DOMAIN:-localhost}
+      NGINX_CLIENT_MAX_BODY_SIZE: ${NGINX_CLIENT_MAX_BODY_SIZE:-100m}
+      NGINX_PROXY_READ_TIMEOUT: ${NGINX_PROXY_READ_TIMEOUT:-600s}
+      NGINX_SSL_ENABLED: ${NGINX_SSL_ENABLED:-false}
+    networks:
+      - platform
+    depends_on:
+      open-webui:
+        condition: service_healthy
+      gateway:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------------
+  # Mock Hermes Agent — local/dev stand-in (OpenAI-compatible)
+  # Points all agents here by default so the stack works out of the box.
+  # Replace with real Hermes base_urls via .env / agents.yaml.
+  # ---------------------------------------------------------------------------
+  mock-agent:
+    <<: *default-restart
+    build:
+      context: ./docker/mock-agent
+      dockerfile: Dockerfile
+    image: ${COMPOSE_PROJECT_NAME:-openwebui-platform}-mock-agent:latest
+    container_name: ${COMPOSE_PROJECT_NAME:-openwebui-platform}-mock-agent
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9010/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    logging: *default-logging

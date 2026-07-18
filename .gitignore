@@ -1,0 +1,46 @@
+# Environment (keep .env.example)
+.env
+.env.local
+.env.production
+.env.*.local
+
+# Secrets & certs
+nginx/ssl/*.pem
+nginx/ssl/*.key
+nginx/ssl/*.crt
+!**/.gitkeep
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Docker / local data dumps
+backups/
+*.sql
+*.dump
+data/
+
+# Logs
+*.log
+logs/
+
+# Node (if any tooling added later)
+node_modules/

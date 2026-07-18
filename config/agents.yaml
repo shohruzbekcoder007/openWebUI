@@ -1,0 +1,131 @@
+# =============================================================================
+# Hermes Agents Configuration
+# Each agent appears as a model in Open WebUI via GET /v1/models
+# Gateway routes POST /v1/chat/completions to the matching agent by model id/name.
+#
+# Reload: restart the gateway service after editing this file
+#   docker compose restart gateway
+# =============================================================================
+
+agents:
+  - id: accounting
+    name: Accounting
+    description: "Expert accounting, bookkeeping, tax, and financial analysis agent."
+    avatar: "💰"
+    system_prompt: |
+      You are Accounting Hermes, a professional accounting assistant.
+      You help with bookkeeping concepts, financial statements, tax basics,
+      budgeting, and clear explanations of accounting terminology.
+      Always note that you do not replace a licensed accountant for legal advice.
+    # Default base_url targets the compose mock-agent so local stacks work OOTB.
+    # Override via HERMES_*_BASE_URL for real Hermes services (no code change).
+    base_url: "${HERMES_ACCOUNTING_BASE_URL:-http://mock-agent:9010}"
+    endpoint: "/v1/chat/completions"
+    headers: {}
+    api_key: "${HERMES_ACCOUNTING_API_KEY:-}"
+    model: "${HERMES_ACCOUNTING_MODEL:-accounting-default}"
+    enabled: true
+    timeout: 120
+    stream: true
+    temperature: 0.3
+
+  - id: gis
+    name: GIS
+    description: "HR / GIS agent (host hr-ai-agent via /v1/chat message API)."
+    avatar: "🗺️"
+    system_prompt: |
+      You are GIS Hermes, a geospatial information systems specialist.
+      You assist with coordinate systems, projections, spatial analysis,
+      map layers, geoprocessing concepts, and GIS best practices.
+    # Host agent on the PC: use host.docker.internal (not localhost) from Gateway.
+    base_url: "${HERMES_GIS_BASE_URL:-http://host.docker.internal:8080}"
+    endpoint: "/v1/chat"
+    # hr-ai-agent expects {"message":"..."} not OpenAI chat.completions
+    api_style: message
+    headers: {}
+    api_key: "${HERMES_GIS_API_KEY:-}"
+    model: "${HERMES_GIS_MODEL:-gis-default}"
+    enabled: true
+    timeout: 120
+    stream: true
+    temperature: 0.4
+
+  - id: statistics
+    name: Statistics
+    description: "Statistical methods, hypothesis testing, and data interpretation."
+    avatar: "📊"
+    system_prompt: |
+      You are Statistics Hermes, a statistical analysis expert.
+      You help with descriptive statistics, inference, probability,
+      experimental design, and clear interpretation of results.
+    base_url: "${HERMES_STATISTICS_BASE_URL:-http://mock-agent:9010}"
+    endpoint: "/v1/chat/completions"
+    headers: {}
+    api_key: "${HERMES_STATISTICS_API_KEY:-}"
+    model: "${HERMES_STATISTICS_MODEL:-statistics-default}"
+    enabled: true
+    timeout: 120
+    stream: true
+    temperature: 0.3
+
+  - id: legal
+    name: Legal
+    description: "Legal research assistant for general legal concepts and drafting help."
+    avatar: "⚖️"
+    system_prompt: |
+      You are Legal Hermes, a legal research assistant.
+      You explain legal concepts, help draft non-binding templates, and
+      outline risk considerations. Always state that you are not a lawyer
+      and do not provide formal legal advice.
+    base_url: "${HERMES_LEGAL_BASE_URL:-http://mock-agent:9010}"
+    endpoint: "/v1/chat/completions"
+    headers: {}
+    api_key: "${HERMES_LEGAL_API_KEY:-}"
+    model: "${HERMES_LEGAL_MODEL:-legal-default}"
+    enabled: true
+    timeout: 120
+    stream: true
+    temperature: 0.2
+
+  - id: programmer
+    name: Programmer
+    description: "Software engineering, architecture, debugging, and code review."
+    avatar: "💻"
+    system_prompt: |
+      You are Programmer Hermes, a senior software engineer.
+      You write clean, production-quality code, explain design trade-offs,
+      review implementations, and prefer secure, maintainable solutions.
+    base_url: "${HERMES_PROGRAMMER_BASE_URL:-http://mock-agent:9010}"
+    endpoint: "/v1/chat/completions"
+    headers: {}
+    api_key: "${HERMES_PROGRAMMER_API_KEY:-}"
+    model: "${HERMES_PROGRAMMER_MODEL:-programmer-default}"
+    enabled: true
+    timeout: 180
+    stream: true
+    temperature: 0.4
+
+  - id: translator
+    name: Translator
+    description: "Professional translation and localization across languages."
+    avatar: "🌐"
+    system_prompt: |
+      You are Translator Hermes, a professional translator.
+      You provide accurate, natural translations, preserve meaning and tone,
+      and call out idioms or cultural nuances when relevant.
+    base_url: "${HERMES_TRANSLATOR_BASE_URL:-http://mock-agent:9010}"
+    endpoint: "/v1/chat/completions"
+    headers: {}
+    api_key: "${HERMES_TRANSLATOR_API_KEY:-}"
+    model: "${HERMES_TRANSLATOR_MODEL:-translator-default}"
+    enabled: true
+    timeout: 90
+    stream: true
+    temperature: 0.3
+
+# Optional global defaults applied when a field is omitted on an agent
+defaults:
+  timeout: 120
+  stream: true
+  temperature: 0.5
+  endpoint: "/v1/chat/completions"
