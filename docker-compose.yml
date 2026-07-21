@@ -130,6 +130,9 @@ services:
       ENABLE_OPENAI_API: ${ENABLE_OPENAI_API:-true}
       OPENAI_API_BASE_URL: ${OPENAI_API_BASE_URL:-http://gateway:8000/v1}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-sk-gateway-dev-key}
+      # Forward chat/user ids as headers to Gateway (Open WebUI strips body metadata)
+      # Without this, X-OpenWebUI-Chat-Id is never sent → agent session_id is empty
+      ENABLE_FORWARD_USER_INFO_HEADERS: ${ENABLE_FORWARD_USER_INFO_HEADERS:-true}
       # Disable Ollama so models come exclusively from the Gateway
       ENABLE_OLLAMA_API: ${ENABLE_OLLAMA_API:-false}
       OLLAMA_BASE_URL: ""

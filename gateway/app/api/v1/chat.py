@@ -8,7 +8,13 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from app.middleware.auth import require_api_key
 from app.models.schemas import ChatCompletionRequest
 from app.services.agent_loader import registry
-from app.services.proxy import AgentProxy, AgentProxyError
+from app.services.proxy import (
+    AgentProxy,
+    AgentProxyError,
+    enrich_request_ids_from_headers,
+    resolve_chat_id,
+    resolve_session_id,
+)
 from app.services.rate_limit import rate_limiter
 from app.utils.logging import get_logger
 
@@ -48,6 +54,10 @@ async def chat_completions(
             headers={"Retry-After": "60", "X-RateLimit-Remaining": "0"},
         )
 
+    # Open WebUI strips metadata/chat_id from the OpenAI body and only forwards
+    # chat id via X-OpenWebUI-Chat-Id when ENABLE_FORWARD_USER_INFO_HEADERS=true.
+    body = enrich_request_ids_from_headers(body, request.headers)
+
     agent = registry.resolve(body.model)
     if not agent:
         logger.warning("model_not_found", model=body.model)
@@ -79,6 +89,7 @@ async def chat_completions(
 
     want_stream = bool(body.stream) if body.stream is not None else agent.stream
 
+    header_chat = request.headers.get("x-openwebui-chat-id")
     logger.info(
         "chat_request",
         model=body.model,
@@ -86,10 +97,17 @@ async def chat_completions(
         stream=want_stream,
         message_count=len(body.messages),
         client=request.client.host if request.client else None,
+        body_chat_id=bool(body.chat_id),
+        body_session_id=bool(body.session_id),
+        header_chat_id=bool(header_chat),
+        resolved_session_id=bool(
+            resolve_session_id(body, request.headers, allow_fingerprint=True)
+        ),
+        resolved_chat_id=bool(resolve_chat_id(body, request.headers)),
     )
 
     if want_stream:
-        generator = proxy.stream(body, agent)
+        generator = proxy.stream(body, agent, headers=request.headers)
         return StreamingResponse(
             generator,
             media_type="text/event-stream",
@@ -103,7 +121,7 @@ async def chat_completions(
         )
 
     try:
-        data = await proxy.complete(body, agent)
+        data = await proxy.complete(body, agent, headers=request.headers)
     except AgentProxyError as exc:
         raise HTTPException(
             status_code=exc.status_code if 400 <= exc.status_code < 600 else 502,

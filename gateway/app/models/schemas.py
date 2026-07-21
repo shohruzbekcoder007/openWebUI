@@ -40,6 +40,11 @@ class ChatCompletionRequest(BaseModel):
     seed: Optional[int] = None
     # Pass-through for extra Open WebUI / provider fields
     metadata: Optional[Dict[str, Any]] = None
+    # Open WebUI often sends these at the top level and/or inside metadata
+    chat_id: Optional[str] = None
+    session_id: Optional[str] = None
+    # Assistant message id (Open WebUI); not used as session_id
+    id: Optional[str] = None
 
     model_config = {"extra": "allow"}
 

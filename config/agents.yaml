@@ -40,7 +40,8 @@ agents:
     # Host agent on the PC: use host.docker.internal (not localhost) from Gateway.
     base_url: "${HERMES_GIS_BASE_URL:-http://host.docker.internal:8080}"
     endpoint: "/v1/chat"
-    # hr-ai-agent expects {"message":"..."} not OpenAI chat.completions
+    # hr-ai-agent expects {"message":"...","session_id":"..."} not OpenAI chat.completions
+    # session_id is filled from Open WebUI session_id / metadata / chat_id
     api_style: message
     headers: {}
     api_key: "${HERMES_GIS_API_KEY:-}"

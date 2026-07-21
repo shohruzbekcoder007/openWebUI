@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 import uuid
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Mapping, Optional
 
 import httpx
 
@@ -18,6 +19,23 @@ from app.models.schemas import (
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+# Open WebUI forwards chat/session ids only via headers when
+# ENABLE_FORWARD_USER_INFO_HEADERS=true (metadata is stripped from body).
+OPENWEBUI_CHAT_ID_HEADERS = (
+    "x-openwebui-chat-id",
+    "x-chat-id",
+)
+OPENWEBUI_SESSION_ID_HEADERS = (
+    "x-openwebui-session-id",
+    "x-session-id",
+)
+OPENWEBUI_USER_ID_HEADERS = (
+    "x-openwebui-user-id",
+    "x-user-id",
+)
+
+HeaderMap = Mapping[str, str]
 
 
 def _message_to_dict(msg: ChatMessage) -> Dict[str, Any]:
@@ -50,14 +68,172 @@ def _last_user_text(messages: List[ChatMessage]) -> str:
     return ""
 
 
+def _first_user_text(messages: List[ChatMessage]) -> str:
+    for msg in messages:
+        if msg.role == "user":
+            return _content_to_text(msg.content)
+    return ""
+
+
+def _metadata_dict(request: ChatCompletionRequest) -> Dict[str, Any]:
+    meta = request.metadata
+    if isinstance(meta, dict):
+        return meta
+    return {}
+
+
+def _first_non_empty(*values: Any) -> Optional[str]:
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return None
+
+
+def _header_value(headers: Optional[HeaderMap], *names: str) -> Optional[str]:
+    if not headers:
+        return None
+    # Starlette Headers are case-insensitive; plain dicts may not be.
+    lower_map: Optional[Dict[str, str]] = None
+    for name in names:
+        try:
+            value = headers.get(name)  # type: ignore[attr-defined]
+        except Exception:
+            value = None
+        if value:
+            return str(value).strip()
+        if lower_map is None:
+            try:
+                lower_map = {str(k).lower(): str(v) for k, v in headers.items()}
+            except Exception:
+                lower_map = {}
+        value = lower_map.get(name.lower()) if lower_map else None
+        if value:
+            return value.strip()
+    return None
+
+
+def conversation_fingerprint(request: ChatCompletionRequest) -> Optional[str]:
+    """Stable fallback id when Open WebUI does not forward chat_id.
+
+    Uses model + first user message. Same chat thread keeps the same first
+    user turn, so multi-turn requests map to one session. Collisions are
+    possible for identical openers — prefer real chat_id headers.
+    """
+    first = _first_user_text(request.messages)
+    if not first:
+        return None
+    raw = f"{request.model}|{first}".encode("utf-8")
+    return "owui-" + hashlib.sha256(raw).hexdigest()[:32]
+
+
+def resolve_chat_id(
+    request: ChatCompletionRequest,
+    headers: Optional[HeaderMap] = None,
+) -> Optional[str]:
+    """Open WebUI chat id from body, metadata, or forward headers."""
+    meta = _metadata_dict(request)
+    extra = getattr(request, "model_extra", None) or {}
+    return _first_non_empty(
+        request.chat_id,
+        meta.get("chat_id"),
+        extra.get("chat_id") if isinstance(extra, dict) else None,
+        _header_value(headers, *OPENWEBUI_CHAT_ID_HEADERS),
+    )
+
+
+def resolve_session_id(
+    request: ChatCompletionRequest,
+    headers: Optional[HeaderMap] = None,
+    *,
+    allow_fingerprint: bool = True,
+) -> Optional[str]:
+    """Session id for upstream agents.
+
+    Preference:
+      body/metadata session_id
+      → Open WebUI session/chat headers
+      → body/metadata chat_id
+      → user id
+      → conversation fingerprint (optional fallback)
+    """
+    meta = _metadata_dict(request)
+    extra = getattr(request, "model_extra", None) or {}
+    resolved = _first_non_empty(
+        request.session_id,
+        meta.get("session_id"),
+        extra.get("session_id") if isinstance(extra, dict) else None,
+        _header_value(headers, *OPENWEBUI_SESSION_ID_HEADERS),
+        resolve_chat_id(request, headers),
+        request.user if isinstance(request.user, str) else None,
+        meta.get("user_id"),
+        _header_value(headers, *OPENWEBUI_USER_ID_HEADERS),
+    )
+    if resolved:
+        return resolved
+    if allow_fingerprint:
+        return conversation_fingerprint(request)
+    return None
+
+
+def enrich_request_ids_from_headers(
+    request: ChatCompletionRequest,
+    headers: Optional[HeaderMap],
+) -> ChatCompletionRequest:
+    """Fill chat_id/session_id on the body from Open WebUI headers if missing."""
+    if not headers:
+        return request
+    chat_id = resolve_chat_id(request, headers)
+    session_id = resolve_session_id(request, headers, allow_fingerprint=False)
+    if chat_id and not request.chat_id:
+        request.chat_id = chat_id
+    if session_id and not request.session_id:
+        request.session_id = session_id
+    elif chat_id and not request.session_id:
+        request.session_id = chat_id
+    return request
+
+
 def build_upstream_payload(
     request: ChatCompletionRequest,
     agent: HermesAgent,
+    headers: Optional[HeaderMap] = None,
 ) -> Dict[str, Any]:
     """Build payload for the upstream agent (OpenAI or simple message style)."""
     if agent.api_style == "message":
-        # hr-ai-agent style: POST /v1/chat {"message": "..."}
-        return {"message": _last_user_text(request.messages) or "(empty)"}
+        # hr-ai-agent style: POST /v1/chat
+        # {"message": "...", "session_id": "<open-webui chat/session>"}
+        payload: Dict[str, Any] = {
+            "message": _last_user_text(request.messages) or "(empty)",
+        }
+        explicit_session = resolve_session_id(
+            request, headers, allow_fingerprint=False
+        )
+        session_id = explicit_session or resolve_session_id(
+            request, headers, allow_fingerprint=True
+        )
+        chat_id = resolve_chat_id(request, headers)
+        if session_id:
+            payload["session_id"] = session_id
+        # Also forward chat_id when present and distinct (debugging / agents that need both)
+        if chat_id and chat_id != session_id:
+            payload["chat_id"] = chat_id
+        elif chat_id and "session_id" not in payload:
+            payload["session_id"] = chat_id
+        logger.info(
+            "message_style_payload",
+            agent_id=agent.id,
+            has_session_id=bool(payload.get("session_id")),
+            has_chat_id=bool(chat_id),
+            session_source=(
+                "header_or_body"
+                if explicit_session
+                else ("fingerprint" if session_id else "none")
+            ),
+        )
+        return payload
 
     messages: List[Dict[str, Any]] = [_message_to_dict(m) for m in request.messages]
 
@@ -236,9 +412,10 @@ class AgentProxy:
         self,
         request: ChatCompletionRequest,
         agent: HermesAgent,
+        headers: Optional[HeaderMap] = None,
     ) -> Dict[str, Any]:
         """Non-streaming chat completion."""
-        payload = build_upstream_payload(request, agent)
+        payload = build_upstream_payload(request, agent, headers=headers)
         if agent.api_style == "openai":
             payload["stream"] = False
         timeout = agent.timeout or self.default_timeout
@@ -250,6 +427,9 @@ class AgentProxy:
             stream=False,
             api_style=agent.api_style,
             url=agent.chat_url,
+            has_session_id=bool(payload.get("session_id"))
+            if agent.api_style == "message"
+            else None,
         )
 
         try:
@@ -303,6 +483,7 @@ class AgentProxy:
         self,
         request: ChatCompletionRequest,
         agent: HermesAgent,
+        headers: Optional[HeaderMap] = None,
     ) -> AsyncIterator[str]:
         """Stream SSE chunks from the Hermes agent (OpenAI-compatible)."""
         display_model = request.model
@@ -311,7 +492,7 @@ class AgentProxy:
         # synthesize OpenAI SSE so Open WebUI still gets a stream.
         if agent.api_style == "message":
             try:
-                data = await self.complete(request, agent)
+                data = await self.complete(request, agent, headers=headers)
             except AgentProxyError as exc:
                 yield _synthetic_error_chunk(display_model, exc.message)
                 yield "data: [DONE]\n\n"
@@ -331,7 +512,7 @@ class AgentProxy:
                 yield line
             return
 
-        payload = build_upstream_payload(request, agent)
+        payload = build_upstream_payload(request, agent, headers=headers)
         payload["stream"] = True
         timeout = agent.timeout or self.default_timeout
 

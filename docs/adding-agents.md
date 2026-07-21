@@ -55,12 +55,33 @@ docker compose restart gateway
 
 ## 5. Requirements for the Hermes agent API
 
-The agent should expose an **OpenAI-compatible** chat endpoint:
+### OpenAI style (`api_style: openai`, default)
 
 - `POST {base_url}{endpoint}` with JSON body:
   - `model`, `messages`, `stream`, `temperature`, …
 - Streaming: `text/event-stream` with `data: {...}` chunks and `data: [DONE]`
 - Non-stream: standard `chat.completion` JSON
+
+### Message style (`api_style: message`)
+
+For simple agents (e.g. hr-ai-agent `POST /v1/chat`):
+
+```json
+{
+  "message": "<last user text>",
+  "session_id": "<Open WebUI session_id or chat_id>"
+}
+```
+
+`session_id` is resolved in order:
+
+1. body / metadata `session_id`
+2. headers `X-OpenWebUI-Chat-Id` / `X-OpenWebUI-Session-Id` (Open WebUI strips body metadata)
+3. body / metadata `chat_id`
+4. user id header / body `user`
+5. fallback fingerprint of `model + first user message`
+
+Open WebUI must have `ENABLE_FORWARD_USER_INFO_HEADERS=true` so it sends `X-OpenWebUI-Chat-Id`. If `chat_id` differs from `session_id`, it is also sent as `chat_id`.
 
 If your agent uses a different path, set `endpoint` accordingly.
 

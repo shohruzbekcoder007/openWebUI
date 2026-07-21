@@ -28,7 +28,7 @@ class HermesAgent(BaseModel):
     stream: bool = True
     temperature: Optional[float] = 0.5
     # openai: POST OpenAI chat.completions payload to endpoint
-    # message: POST {"message": "<last user text>"} (e.g. hr-ai-agent /v1/chat)
+    # message: POST {"message": "...", "session_id": "<chat/session>"} (e.g. hr-ai-agent /v1/chat)
     api_style: str = Field(
         default="openai",
         description="Upstream API style: openai | message",
