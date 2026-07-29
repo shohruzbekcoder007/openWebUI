@@ -59,8 +59,11 @@ agents:
       You are Statistics Hermes, a statistical analysis expert.
       You help with descriptive statistics, inference, probability,
       experimental design, and clear interpretation of results.
+    # Host hermes agent (e.g. hermes_security_agent on :9000) uses message API, not OpenAI completions.
     base_url: "${HERMES_STATISTICS_BASE_URL:-http://mock-agent:9010}"
-    endpoint: "/v1/chat/completions"
+    endpoint: "/v1/chat"
+    # hermes agent expects {"message":"...","session_id":"..."} not OpenAI chat.completions
+    api_style: message
     headers: {}
     api_key: "${HERMES_STATISTICS_API_KEY:-}"
     model: "${HERMES_STATISTICS_MODEL:-statistics-default}"

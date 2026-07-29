@@ -43,6 +43,156 @@ def _message_to_dict(msg: ChatMessage) -> Dict[str, Any]:
     return data
 
 
+def _decode_data_url(url: str) -> Optional[Dict[str, str]]:
+    """Decode data:<mime>;base64,<payload> into filename + text content when possible."""
+    import base64
+    import binascii
+    from urllib.parse import unquote
+
+    if not url or not isinstance(url, str):
+        return None
+    url = url.strip()
+    if not url.startswith("data:"):
+        return None
+    try:
+        header, _, data = url.partition(",")
+        if not data:
+            return None
+        mime = "application/octet-stream"
+        if header.startswith("data:") and ";" in header:
+            mime = header[5:].split(";", 1)[0] or mime
+        raw: bytes
+        if ";base64" in header.lower():
+            raw = base64.b64decode(data, validate=False)
+        else:
+            raw = unquote(data).encode("utf-8", errors="replace")
+        # Prefer text for logs / plain docs
+        text: Optional[str] = None
+        if mime.startswith("text/") or mime in {
+            "application/json",
+            "application/xml",
+            "application/x-ndjson",
+            "application/log",
+        }:
+            text = raw.decode("utf-8", errors="replace")
+        else:
+            # Heuristic: if mostly printable, treat as text (nginx logs often .log)
+            sample = raw[:4000]
+            if sample and sum(32 <= b < 127 or b in (9, 10, 13) for b in sample) / max(
+                1, len(sample)
+            ) > 0.85:
+                text = raw.decode("utf-8", errors="replace")
+        if text is None:
+            return {
+                "filename": "attachment.bin",
+                "content_base64": base64.b64encode(raw).decode("ascii"),
+                "encoding": "base64",
+                "media_type": mime,
+            }
+        ext = ".txt"
+        if "json" in mime:
+            ext = ".json"
+        elif "xml" in mime:
+            ext = ".xml"
+        elif "log" in mime or mime == "text/plain":
+            ext = ".log"
+        return {
+            "filename": f"attachment{ext}",
+            "content": text,
+            "encoding": "utf-8",
+            "media_type": mime,
+        }
+    except (binascii.Error, ValueError, UnicodeError):
+        return None
+
+
+def _part_to_attachments(part: Any) -> List[Dict[str, str]]:
+    """Extract file-like parts Open WebUI may embed in multimodal content."""
+    out: List[Dict[str, str]] = []
+    if not isinstance(part, dict):
+        return out
+
+    ptype = str(part.get("type") or "").lower()
+
+    # text parts are not files
+    if ptype in {"text", "input_text"}:
+        return out
+
+    # OpenAI / OWUI style image_url or file_url with data:
+    for key in ("image_url", "file_url", "input_audio"):
+        block = part.get(key)
+        url = None
+        if isinstance(block, dict):
+            url = block.get("url") or block.get("file_data")
+        elif isinstance(block, str):
+            url = block
+        if url:
+            decoded = _decode_data_url(str(url))
+            if decoded:
+                name = part.get("name") or part.get("filename")
+                if name:
+                    decoded["filename"] = str(PathName(name))
+                out.append(decoded)
+
+    # type: file / input_file
+    if ptype in {"file", "input_file", "document"}:
+        file_obj = part.get("file") if isinstance(part.get("file"), dict) else part
+        name = (
+            file_obj.get("filename")
+            or file_obj.get("name")
+            or part.get("filename")
+            or part.get("name")
+            or "upload.bin"
+        )
+        # inline base64
+        b64 = (
+            file_obj.get("file_data")
+            or file_obj.get("data")
+            or file_obj.get("content")
+            or part.get("data")
+        )
+        url = file_obj.get("url") or part.get("url")
+        if url and str(url).startswith("data:"):
+            decoded = _decode_data_url(str(url))
+            if decoded:
+                decoded["filename"] = str(PathName(name))
+                out.append(decoded)
+                return out
+        if isinstance(b64, str) and b64.strip():
+            if b64.startswith("data:"):
+                decoded = _decode_data_url(b64)
+                if decoded:
+                    decoded["filename"] = str(PathName(name))
+                    out.append(decoded)
+            else:
+                import base64
+
+                try:
+                    raw = base64.b64decode(b64, validate=False)
+                    text = raw.decode("utf-8", errors="replace")
+                    out.append(
+                        {
+                            "filename": str(PathName(name)),
+                            "content": text,
+                            "encoding": "utf-8",
+                        }
+                    )
+                except Exception:
+                    out.append(
+                        {
+                            "filename": str(PathName(name)),
+                            "content_base64": b64,
+                            "encoding": "base64",
+                        }
+                    )
+    return out
+
+
+def PathName(name: str) -> str:
+    """Basename only — avoid path traversal in attachment names."""
+    return name.replace("\\", "/").rsplit("/", 1)[-1] or "upload.bin"
+
+
 def _content_to_text(content: Any) -> str:
     if content is None:
         return ""
@@ -51,12 +201,22 @@ def _content_to_text(content: Any) -> str:
     if isinstance(content, list):
         parts: List[str] = []
         for part in content:
-            if isinstance(part, dict) and part.get("type") == "text":
-                parts.append(str(part.get("text") or ""))
+            if isinstance(part, dict) and part.get("type") in {"text", "input_text", None}:
+                if part.get("type") in {"text", "input_text"} or "text" in part:
+                    parts.append(str(part.get("text") or ""))
             elif isinstance(part, str):
                 parts.append(part)
         return " ".join(parts).strip()
     return str(content)
+
+
+def _content_to_attachments(content: Any) -> List[Dict[str, str]]:
+    if not isinstance(content, list):
+        return []
+    found: List[Dict[str, str]] = []
+    for part in content:
+        found.extend(_part_to_attachments(part))
+    return found
 
 
 def _last_user_text(messages: List[ChatMessage]) -> str:
@@ -66,6 +226,59 @@ def _last_user_text(messages: List[ChatMessage]) -> str:
     if messages:
         return _content_to_text(messages[-1].content)
     return ""
+
+
+def _last_user_attachments(messages: List[ChatMessage]) -> List[Dict[str, str]]:
+    for msg in reversed(messages):
+        if msg.role == "user":
+            return _content_to_attachments(msg.content)
+    if messages:
+        return _content_to_attachments(messages[-1].content)
+    return []
+
+
+def _request_level_files(request: ChatCompletionRequest) -> List[Dict[str, str]]:
+    """Open WebUI sometimes puts files on the top-level request body."""
+    extra = getattr(request, "model_extra", None) or {}
+    raw_files = extra.get("files") if isinstance(extra, dict) else None
+    if raw_files is None and hasattr(request, "files"):
+        raw_files = getattr(request, "files", None)
+    if not isinstance(raw_files, list):
+        return []
+    out: List[Dict[str, str]] = []
+    for item in raw_files:
+        if not isinstance(item, dict):
+            continue
+        # Already has content
+        name = item.get("filename") or item.get("name") or item.get("id") or "upload.bin"
+        if item.get("content"):
+            out.append(
+                {
+                    "filename": str(PathName(str(name))),
+                    "content": str(item.get("content")),
+                    "encoding": "utf-8",
+                }
+            )
+            continue
+        for key in ("url", "data", "file_data", "content_base64"):
+            val = item.get(key)
+            if not val:
+                continue
+            if str(val).startswith("data:"):
+                decoded = _decode_data_url(str(val))
+                if decoded:
+                    decoded["filename"] = str(PathName(str(name)))
+                    out.append(decoded)
+            elif key == "content_base64" or item.get("encoding") == "base64":
+                out.append(
+                    {
+                        "filename": str(PathName(str(name))),
+                        "content_base64": str(val),
+                        "encoding": "base64",
+                    }
+                )
+            break
+    return out
 
 
 def _first_user_text(messages: List[ChatMessage]) -> str:
@@ -203,11 +416,48 @@ def build_upstream_payload(
 ) -> Dict[str, Any]:
     """Build payload for the upstream agent (OpenAI or simple message style)."""
     if agent.api_style == "message":
-        # hr-ai-agent style: POST /v1/chat
-        # {"message": "...", "session_id": "<open-webui chat/session>"}
+        # hr-ai-agent / hermes style: POST /v1/chat
+        # {"message": "...", "session_id": "...", "files":[{filename, content}]}
+        user_text = _last_user_text(request.messages)
+        attachments = _last_user_attachments(request.messages)
+        attachments.extend(_request_level_files(request))
+        # Deduplicate by filename+len
+        seen = set()
+        unique_files: List[Dict[str, str]] = []
+        for f in attachments:
+            key = (f.get("filename"), len(f.get("content") or f.get("content_base64") or ""))
+            if key in seen:
+                continue
+            seen.add(key)
+            unique_files.append(f)
+
+        # If only files and empty text, still send a short instruction
+        if not (user_text or "").strip() and unique_files:
+            user_text = "Please analyze the attached file(s)."
+
         payload: Dict[str, Any] = {
-            "message": _last_user_text(request.messages) or "(empty)",
+            "message": user_text or "(empty)",
         }
+        if unique_files:
+            payload["files"] = unique_files
+            # Also inline small text files into message so older agents still work
+            inline_parts: List[str] = []
+            for f in unique_files:
+                content = f.get("content")
+                if not content:
+                    continue
+                # Cap inline size per file (512KB chars)
+                if len(content) > 512_000:
+                    content = content[:512_000] + "\n...[truncated]..."
+                fname = f.get("filename") or "attachment.log"
+                inline_parts.append(
+                    f"\n\n----- BEGIN FILE: {fname} -----\n{content}\n----- END FILE: {fname} -----\n"
+                )
+            if inline_parts:
+                payload["message"] = (payload["message"] or "").rstrip() + "".join(
+                    inline_parts
+                )
+
         explicit_session = resolve_session_id(
             request, headers, allow_fingerprint=False
         )
@@ -227,6 +477,8 @@ def build_upstream_payload(
             agent_id=agent.id,
             has_session_id=bool(payload.get("session_id")),
             has_chat_id=bool(chat_id),
+            attachment_count=len(unique_files),
+            message_len=len(payload.get("message") or ""),
             session_source=(
                 "header_or_body"
                 if explicit_session
