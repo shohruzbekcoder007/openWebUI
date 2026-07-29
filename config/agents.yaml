@@ -10,17 +10,16 @@
 agents:
   - id: accounting
     name: Accounting
-    description: "Expert accounting, bookkeeping, tax, and financial analysis agent."
+    description: "QXAudit host (docs RAG) — message API with session_id from Open WebUI."
     avatar: "💰"
     system_prompt: |
-      You are Accounting Hermes, a professional accounting assistant.
-      You help with bookkeeping concepts, financial statements, tax basics,
-      budgeting, and clear explanations of accounting terminology.
-      Always note that you do not replace a licensed accountant for legal advice.
-    # Default base_url targets the compose mock-agent so local stacks work OOTB.
-    # Override via HERMES_*_BASE_URL for real Hermes services (no code change).
-    base_url: "${HERMES_ACCOUNTING_BASE_URL:-http://mock-agent:9010}"
-    endpoint: "/v1/chat/completions"
+      You are QXAudit (routed as Accounting in Open WebUI).
+      Answer document/policy questions via the upstream QXAudit service.
+    # Points at QXAudit on host :9090 by default (override HERMES_ACCOUNTING_BASE_URL).
+    # Use message API so Gateway forwards session_id / chat_id for multi-turn memory.
+    base_url: "${HERMES_ACCOUNTING_BASE_URL:-http://host.docker.internal:9090}"
+    endpoint: "/v1/chat"
+    api_style: message
     headers: {}
     api_key: "${HERMES_ACCOUNTING_API_KEY:-}"
     model: "${HERMES_ACCOUNTING_MODEL:-accounting-default}"
