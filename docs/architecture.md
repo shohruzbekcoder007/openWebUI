@@ -14,7 +14,7 @@ Hermes Gateway (FastAPI)
    │  GET  /v1/models          → list agents as models
    │  POST /v1/chat/completions → route by model id
    ▼
-Hermes Agent (Accounting | GIS | Statistics | Legal | Programmer | Translator | …)
+Hermes Agent (Qishloq xo'jaligi | GIS | Statistics | Legal | Programmer | Translator | …)
 ```
 
 Open WebUI **never** calls Hermes agents directly. The Gateway is the only AI backend Open WebUI knows about.

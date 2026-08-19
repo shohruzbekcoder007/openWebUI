@@ -8,21 +8,21 @@
 # =============================================================================
 
 agents:
-  - id: accounting
-    name: Accounting
+  - id: agriculture
+    name: Qishloq xo'jaligi
     description: "QXAudit host (docs RAG) — message API with session_id from Open WebUI."
-    avatar: "💰"
+    avatar: "🌾"
     system_prompt: |
-      You are QXAudit (routed as Accounting in Open WebUI).
+      You are QXAudit (routed as Qishloq xo'jaligi in Open WebUI).
       Answer document/policy questions via the upstream QXAudit service.
-    # Points at QXAudit on host :9090 by default (override HERMES_ACCOUNTING_BASE_URL).
+    # Points at QXAudit on host :9090 by default (override HERMES_AGRICULTURE_BASE_URL).
     # Use message API so Gateway forwards session_id / chat_id for multi-turn memory.
-    base_url: "${HERMES_ACCOUNTING_BASE_URL:-http://host.docker.internal:9090}"
+    base_url: "${HERMES_AGRICULTURE_BASE_URL:-http://host.docker.internal:9090}"
     endpoint: "/v1/chat"
     api_style: message
     headers: {}
-    api_key: "${HERMES_ACCOUNTING_API_KEY:-}"
-    model: "${HERMES_ACCOUNTING_MODEL:-accounting-default}"
+    api_key: "${HERMES_AGRICULTURE_API_KEY:-}"
+    model: "${HERMES_AGRICULTURE_MODEL:-agriculture-default}"
     enabled: true
     timeout: 120
     stream: true

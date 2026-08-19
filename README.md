@@ -20,7 +20,7 @@ Browser → Open WebUI → Gateway (OpenAI-compatible) → Hermes Agent
 
 - **Open WebUI** — official Docker image; connects **only** to the Gateway via `OPENAI_API_BASE_URL`
 - **Gateway** — OpenAI-compatible API (`/v1/models`, `/v1/chat/completions`), auth, streaming, rate limits, agent routing
-- **Hermes Agents** — configured in `config/agents.yaml` (Accounting, GIS, Statistics, Legal, Programmer, Translator, …)
+- **Hermes Agents** — configured in `config/agents.yaml` (Qishloq xo'jaligi, GIS, Statistics, Legal, Programmer, Translator, …)
 - **Redis** — optional rate-limit store
 - **PostgreSQL** — optional Open WebUI database
 - **Nginx** — production reverse proxy (HTTPS, WebSocket, SSE, large uploads)
@@ -88,7 +88,7 @@ curl -s http://localhost:8000/v1/models \
   -H "Authorization: Bearer sk-gateway-dev-key"
 ```
 
-You should see **Accounting**, **GIS**, **Statistics**, **Legal**, **Programmer**, **Translator**.
+You should see **Qishloq xo'jaligi**, **GIS**, **Statistics**, **Legal**, **Programmer**, **Translator**.
 
 4. In Open WebUI, pick a model (e.g. **GIS**) and chat.  
    The Gateway routes to that Hermes agent (mock agent by default).

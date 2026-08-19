@@ -22,7 +22,7 @@ Customization is done exclusively via:
 
 ## Model discovery
 
-Open WebUI calls `GET {OPENAI_API_BASE_URL}/models`. The Gateway returns each enabled Hermes Agent as a model (Accounting, GIS, Statistics, etc.).
+Open WebUI calls `GET {OPENAI_API_BASE_URL}/models`. The Gateway returns each enabled Hermes Agent as a model (Qishloq xo'jaligi, GIS, Statistics, etc.).
 
 ## Updating Open WebUI
 
