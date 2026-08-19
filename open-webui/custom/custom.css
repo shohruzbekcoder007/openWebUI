@@ -1,0 +1,150 @@
+/*
+ * Open WebUI — custom sidebar page styles
+ * Served at /static/custom.css
+ *
+ * Upstream ships this file empty and links it from every page; it is mounted read-only
+ * from docker-compose.yml. Pairs with custom/loader.js.
+ *
+ * Colors reuse Open WebUI's own Tailwind theme variables (--color-gray-*), with literal
+ * fallbacks in case a future version renames them.
+ */
+
+/* ---------------------------------------------------------------- sidebar item */
+
+/* Active state, matching the built-in items (bg-black/[0.035] · dark:bg-white/[0.045]) */
+[data-owui-custom-item][data-owui-variant='list'].is-active a,
+[data-owui-custom-item][data-owui-variant='rail'].is-active a > div {
+	background-color: rgba(0, 0, 0, 0.035);
+}
+
+html.dark [data-owui-custom-item][data-owui-variant='list'].is-active a,
+html.dark [data-owui-custom-item][data-owui-variant='rail'].is-active a > div {
+	background-color: rgba(255, 255, 255, 0.045);
+}
+
+/* ---------------------------------------------------------------- overlay page */
+
+#owui-custom-page {
+	position: fixed;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	left: var(--owui-custom-left, 0px);
+	z-index: 40; /* below the app's modals (z-50) */
+	overflow-y: auto;
+	background-color: #ffffff;
+	color: var(--color-gray-700, oklch(0.42 0 0));
+	font-size: 13px;
+	line-height: 1.5;
+}
+
+html.dark #owui-custom-page {
+	background-color: var(--color-gray-900, oklch(0.2 0 0));
+	color: var(--color-gray-100, oklch(0.94 0 0));
+}
+
+#owui-custom-page[hidden] {
+	display: none;
+}
+
+.owui-custom-head {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 1rem;
+	padding: 1.25rem 1.5rem 0.75rem;
+	max-width: 64rem;
+	margin: 0 auto;
+}
+
+.owui-custom-title {
+	display: flex;
+	align-items: center;
+	gap: 0.625rem;
+	min-width: 0;
+}
+
+.owui-custom-badge {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 2.25rem;
+	height: 2.25rem;
+	border-radius: 0.75rem;
+	flex-shrink: 0;
+	background-color: var(--color-gray-50, oklch(0.98 0 0));
+}
+
+html.dark .owui-custom-badge {
+	background-color: var(--color-gray-850, oklch(0.27 0 0));
+}
+
+.owui-custom-badge svg {
+	width: 1.125rem;
+	height: 1.125rem;
+}
+
+.owui-custom-heading {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+
+.owui-custom-heading strong {
+	font-size: 1.05rem;
+	font-weight: 500;
+	line-height: 1.25;
+}
+
+.owui-custom-heading small {
+	font-size: 0.75rem;
+	color: var(--color-gray-500, oklch(0.69 0 0));
+}
+
+.owui-custom-close {
+	appearance: none;
+	background: none;
+	border: 0;
+	cursor: pointer;
+	font-size: 1rem;
+	line-height: 1;
+	padding: 0.5rem;
+	border-radius: 0.5rem;
+	color: var(--color-gray-500, oklch(0.69 0 0));
+	transition: background-color 0.15s ease;
+}
+
+.owui-custom-close:hover {
+	background-color: var(--color-gray-50, oklch(0.98 0 0));
+}
+
+html.dark .owui-custom-close:hover {
+	background-color: var(--color-gray-850, oklch(0.27 0 0));
+}
+
+.owui-custom-body {
+	padding: 0 1.5rem 2rem;
+	max-width: 64rem;
+	margin: 0 auto;
+}
+
+.owui-custom-placeholder {
+	border: 1px dashed var(--color-gray-100, oklch(0.94 0 0));
+	border-radius: 1rem;
+	padding: 3rem 1.5rem;
+	text-align: center;
+	color: var(--color-gray-500, oklch(0.69 0 0));
+}
+
+html.dark .owui-custom-placeholder {
+	border-color: var(--color-gray-850, oklch(0.27 0 0));
+}
+
+/* A plugin route or external tool can be embedded straight into the page body */
+.owui-custom-body iframe {
+	width: 100%;
+	min-height: 70vh;
+	border: 0;
+	border-radius: 1rem;
+	background-color: transparent;
+}

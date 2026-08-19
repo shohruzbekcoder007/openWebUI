@@ -150,6 +150,10 @@ services:
     volumes:
       # Uploads, embeddings cache, vector_db (chat/users live in Postgres when DATABASE_URL is PG)
       - open-webui-data:/app/backend/data
+      # Official frontend hooks — upstream ships both files empty and loads them on every
+      # page; mounting ours adds the "Custom" sidebar page. See open-webui/README.md
+      - ./open-webui/custom/loader.js:/app/backend/open_webui/static/loader.js:ro
+      - ./open-webui/custom/custom.css:/app/backend/open_webui/static/custom.css:ro
     ports:
       - "${OPENWEBUI_PORT:-3000}:8080"
     networks:
