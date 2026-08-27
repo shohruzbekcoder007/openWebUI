@@ -71,20 +71,22 @@ agents:
     stream: true
     temperature: 0.3
 
-  - id: legal
-    name: Legal
-    description: "Legal research assistant for general legal concepts and drafting help."
-    avatar: "⚖️"
+  - id: press_reliz
+    name: Press reliz
+    description: "Press reliz assistant: drafting, editing, and distributing press releases."
+    avatar: "📰"
     system_prompt: |
-      You are Legal Hermes, a legal research assistant.
-      You explain legal concepts, help draft non-binding templates, and
-      outline risk considerations. Always state that you are not a lawyer
-      and do not provide formal legal advice.
-    base_url: "${HERMES_LEGAL_BASE_URL:-http://mock-agent:9010}"
-    endpoint: "/v1/chat/completions"
+      You are Press reliz Hermes, a press release assistant.
+      You draft and edit press releases with a clear headline, lead paragraph,
+      key facts, quotes, and boilerplate, and you keep the tone factual and
+      newsroom-ready.
+    base_url: "${HERMES_PRESS_RELIZ_BASE_URL:-http://mock-agent:9010}"
+    endpoint: "/v1/chat"
+    # PressRelizAgent expects {"message":"...","session_id":"..."} not OpenAI chat.completions
+    api_style: message
     headers: {}
-    api_key: "${HERMES_LEGAL_API_KEY:-}"
-    model: "${HERMES_LEGAL_MODEL:-legal-default}"
+    api_key: "${HERMES_PRESS_RELIZ_API_KEY:-}"
+    model: "${HERMES_PRESS_RELIZ_MODEL:-press-reliz-default}"
     enabled: true
     timeout: 120
     stream: true
