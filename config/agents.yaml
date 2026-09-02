@@ -92,7 +92,9 @@ agents:
     api_key: "${HERMES_PRESS_RELIZ_API_KEY:-}"
     model: "${HERMES_PRESS_RELIZ_MODEL:-press-reliz-default}"
     enabled: true
-    timeout: 120
+    # A multi-page PDF goes through pdf_extract and a 27B model before a single
+    # token comes back, which runs well past the 120s the other agents use.
+    timeout: "${HERMES_PRESS_RELIZ_TIMEOUT:-900}"
     stream: true
     temperature: 0.2
 
