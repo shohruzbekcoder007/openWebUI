@@ -53,6 +53,21 @@ class Settings(BaseSettings):
     # Logging
     log_request_bodies: bool = Field(default=False, alias="LOG_REQUEST_BODIES")
 
+    # Open WebUI (used to pull raw attachment bytes by file id)
+    # Open WebUI only hands us file *ids*; the bytes live behind
+    # GET /api/v1/files/{id}/content, which needs a verified user token.
+    # Use an Open WebUI API key from an admin account (Settings -> Account -> API keys)
+    # so files uploaded by any user can be read.
+    openwebui_base_url: str = Field(
+        default="http://open-webui:8080",
+        alias="OPENWEBUI_BASE_URL",
+    )
+    openwebui_api_key: str = Field(default="", alias="OPENWEBUI_API_KEY")
+    openwebui_file_max_bytes: int = Field(
+        default=52_428_800,
+        alias="OPENWEBUI_FILE_MAX_BYTES",
+    )
+
     # Optional infra
     redis_enabled: bool = Field(default=True, alias="REDIS_ENABLED")
     redis_url: str = Field(default="redis://redis:6379/0", alias="REDIS_URL")
@@ -61,6 +76,11 @@ class Settings(BaseSettings):
     # Feature flags
     enable_mcp: bool = Field(default=False, alias="ENABLE_MCP")
     enable_rag: bool = Field(default=False, alias="ENABLE_RAG")
+
+    @property
+    def openwebui_files_enabled(self) -> bool:
+        """Raw attachment passthrough needs a base URL and a token."""
+        return bool(self.openwebui_base_url.strip() and self.openwebui_api_key.strip())
 
     @property
     def api_keys(self) -> List[str]:
@@ -72,6 +92,11 @@ class Settings(BaseSettings):
         """Parse comma-separated CORS origins."""
         origins = [o.strip() for o in self.cors_origins.split(",") if o.strip()]
         return origins or ["*"]
+
+    @field_validator("openwebui_base_url")
+    @classmethod
+    def strip_base_url_slash(cls, value: str) -> str:
+        return (value or "").strip().rstrip("/")
 
     @field_validator("log_level")
     @classmethod

@@ -14,6 +14,7 @@ from app import __version__
 from app.api.v1 import chat, health, models
 from app.config import get_settings
 from app.services.agent_loader import registry
+from app.services.openwebui_files import start_file_client, stop_file_client
 from app.services.proxy import AgentProxy
 from app.services.rate_limit import rate_limiter
 from app.utils.logging import get_logger, setup_logging
@@ -41,6 +42,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     proxy = AgentProxy(default_timeout=settings.default_agent_timeout)
     await proxy.start()
     app.state.proxy = proxy
+
+    # Attachment passthrough: resolves Open WebUI file ids to raw bytes
+    app.state.owui_files = await start_file_client()
 
     # Rate limiter
     rate_limiter.rpm = settings.rate_limit_rpm
@@ -70,6 +74,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Shutdown
     await proxy.stop()
+    await stop_file_client()
     if app.state.redis is not None:
         await app.state.redis.aclose()
     logger.info("gateway_stopped")

@@ -84,6 +84,10 @@ agents:
     endpoint: "/v1/chat"
     # PressRelizAgent expects {"message":"...","session_id":"..."} not OpenAI chat.completions
     api_style: message
+    # /v1/chat also takes multipart: message= + session_id= + file=
+    # Gateway downloads the raw bytes from Open WebUI and posts them as form parts,
+    # so the agent's own pdf_extract / pdf_to_md tools see the original file.
+    files_style: multipart
     headers: {}
     api_key: "${HERMES_PRESS_RELIZ_API_KEY:-}"
     model: "${HERMES_PRESS_RELIZ_MODEL:-press-reliz-default}"

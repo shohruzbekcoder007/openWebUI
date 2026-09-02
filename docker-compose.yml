@@ -61,6 +61,11 @@ services:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       ENABLE_MCP: ${ENABLE_MCP:-false}
       ENABLE_RAG: ${ENABLE_RAG:-false}
+      # Attachment passthrough fallback: only used when the Gateway is handed a
+      # bare file id (the Hermes File Passthrough filter sends the bytes itself)
+      OPENWEBUI_BASE_URL: ${OPENWEBUI_BASE_URL:-http://open-webui:8080}
+      OPENWEBUI_API_KEY: ${OPENWEBUI_API_KEY:-}
+      OPENWEBUI_FILE_MAX_BYTES: ${OPENWEBUI_FILE_MAX_BYTES:-52428800}
       # Hermes agent overrides (optional; also expandable in agents.yaml)
       HERMES_AGRICULTURE_BASE_URL: ${HERMES_AGRICULTURE_BASE_URL:-http://mock-agent:9010}
       HERMES_GIS_BASE_URL: ${HERMES_GIS_BASE_URL:-http://host.docker.internal:8080}
@@ -138,6 +143,11 @@ services:
       OLLAMA_BASE_URL: ""
       MODELS_CACHE_TTL: ${MODELS_CACHE_TTL:-30}
       RAG_FILE_MAX_SIZE: ${RAG_FILE_MAX_SIZE:-100}
+      # true = stop chunking/embedding attachments and stop wrapping them in the
+      # "### Task: answer from the context" template. Agents that do their own
+      # document work (QXAudit, PressReliz) want the question, not a RAG prompt.
+      # Same switch as Admin -> Settings -> Documents -> Bypass Embedding and Retrieval.
+      BYPASS_EMBEDDING_AND_RETRIEVAL: ${BYPASS_EMBEDDING_AND_RETRIEVAL:-false}
       # Avoid blocking startup on full HuggingFace snapshot downloads (onnx/tf/etc).
       # First boot still needs essential model files once; after that stay local.
       RAG_EMBEDDING_MODEL_AUTO_UPDATE: ${RAG_EMBEDDING_MODEL_AUTO_UPDATE:-false}

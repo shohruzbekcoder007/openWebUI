@@ -11,6 +11,7 @@ from typing import Any, AsyncIterator, Dict, List, Mapping, Optional
 import httpx
 
 from app.models.agent import HermesAgent
+from app.services.openwebui_files import RawFile, get_file_client
 from app.models.schemas import (
     ChatCompletionRequest,
     ChatCompletionResponse,
@@ -238,46 +239,194 @@ def _last_user_attachments(messages: List[ChatMessage]) -> List[Dict[str, str]]:
 
 
 def _request_level_files(request: ChatCompletionRequest) -> List[Dict[str, str]]:
-    """Open WebUI sometimes puts files on the top-level request body."""
+    """Open WebUI sometimes puts files on the top-level request body.
+
+    `hermes_files` is also read: the Hermes passthrough filter can load the
+    bytes inside Open WebUI and hand them over base64-encoded, which removes
+    the need for the Gateway to hold an Open WebUI API key.
+    """
     extra = getattr(request, "model_extra", None) or {}
-    raw_files = extra.get("files") if isinstance(extra, dict) else None
-    if raw_files is None and hasattr(request, "files"):
-        raw_files = getattr(request, "files", None)
-    if not isinstance(raw_files, list):
-        return []
+    buckets: List[Any] = []
+    if isinstance(extra, dict):
+        buckets.append(extra.get("files"))
+        buckets.append(extra.get("hermes_files"))
+    if hasattr(request, "files"):
+        buckets.append(getattr(request, "files", None))
+
     out: List[Dict[str, str]] = []
-    for item in raw_files:
-        if not isinstance(item, dict):
+    for raw_files in buckets:
+        if not isinstance(raw_files, list):
             continue
-        # Already has content
-        name = item.get("filename") or item.get("name") or item.get("id") or "upload.bin"
-        if item.get("content"):
-            out.append(
-                {
+        for item in raw_files:
+            if not isinstance(item, dict):
+                continue
+            name = (
+                item.get("filename")
+                or item.get("name")
+                or item.get("id")
+                or "upload.bin"
+            )
+            media_type = str(item.get("media_type") or item.get("content_type") or "")
+            # Already has content
+            if item.get("content"):
+                entry = {
                     "filename": str(PathName(str(name))),
                     "content": str(item.get("content")),
                     "encoding": "utf-8",
                 }
-            )
-            continue
-        for key in ("url", "data", "file_data", "content_base64"):
-            val = item.get(key)
-            if not val:
+                if media_type:
+                    entry["media_type"] = media_type
+                out.append(entry)
                 continue
-            if str(val).startswith("data:"):
-                decoded = _decode_data_url(str(val))
-                if decoded:
-                    decoded["filename"] = str(PathName(str(name)))
-                    out.append(decoded)
-            elif key == "content_base64" or item.get("encoding") == "base64":
-                out.append(
-                    {
+            for key in ("url", "data", "file_data", "content_base64"):
+                val = item.get(key)
+                if not val:
+                    continue
+                if str(val).startswith("data:"):
+                    decoded = _decode_data_url(str(val))
+                    if decoded:
+                        decoded["filename"] = str(PathName(str(name)))
+                        if media_type:
+                            decoded["media_type"] = media_type
+                        out.append(decoded)
+                elif key == "content_base64" or item.get("encoding") == "base64":
+                    entry = {
                         "filename": str(PathName(str(name))),
                         "content_base64": str(val),
                         "encoding": "base64",
                     }
-                )
-            break
+                    if media_type:
+                        entry["media_type"] = media_type
+                    out.append(entry)
+                break
+    return out
+
+
+def _file_ref(item: Any) -> Optional[Dict[str, str]]:
+    """Normalize one Open WebUI file entry into {id, name, content_type}.
+
+    Entries arrive in several shapes depending on where they were picked up:
+    a bare id string, {"id": ...}, or {"type": "file", "file": {...}}.
+    Entries that already carry their content are skipped — those are handled
+    by the inline path and must not be downloaded twice.
+    """
+    if isinstance(item, str):
+        return {"id": item, "name": "", "content_type": ""} if item.strip() else None
+    if not isinstance(item, dict):
+        return None
+
+    inner = item.get("file") if isinstance(item.get("file"), dict) else {}
+    # Already inlined by Open WebUI or by the caller — not a reference.
+    if item.get("content") or item.get("content_base64") or item.get("data"):
+        return None
+
+    file_id = (
+        item.get("id")
+        or inner.get("id")
+        or item.get("file_id")
+        or item.get("collection_name")
+    )
+    if not file_id or not str(file_id).strip():
+        return None
+
+    meta = inner.get("meta") if isinstance(inner.get("meta"), dict) else {}
+    if not meta and isinstance(item.get("meta"), dict):
+        meta = item["meta"]
+
+    name = (
+        item.get("filename")
+        or item.get("name")
+        or inner.get("filename")
+        or inner.get("name")
+        or meta.get("name")
+        or ""
+    )
+    ctype = item.get("content_type") or meta.get("content_type") or ""
+    return {
+        "id": str(file_id).strip(),
+        "name": str(name or ""),
+        "content_type": str(ctype or ""),
+    }
+
+
+def _openwebui_file_refs(request: ChatCompletionRequest) -> List[Dict[str, str]]:
+    """Collect referenced (not inlined) Open WebUI attachments.
+
+    Open WebUI moves `files` into `metadata` and then drops `metadata` before
+    calling an external OpenAI endpoint, so nothing here is guaranteed. Every
+    place an id realistically survives is checked, including the custom keys a
+    Filter function can use to smuggle them through.
+    """
+    extra = getattr(request, "model_extra", None) or {}
+    meta = _metadata_dict(request)
+
+    buckets: List[Any] = [
+        extra.get("files"),
+        extra.get("__files__"),
+        extra.get("hermes_files"),
+        meta.get("files"),
+        meta.get("__files__"),
+    ]
+    for msg in request.messages:
+        msg_extra = getattr(msg, "model_extra", None) or {}
+        buckets.append(msg_extra.get("files"))
+
+    refs: List[Dict[str, str]] = []
+    seen: set = set()
+    for bucket in buckets:
+        if not isinstance(bucket, list):
+            continue
+        for item in bucket:
+            ref = _file_ref(item)
+            if not ref or ref["id"] in seen:
+                continue
+            seen.add(ref["id"])
+            refs.append(ref)
+    return refs
+
+
+def _attachment_to_raw(item: Dict[str, str]) -> Optional[RawFile]:
+    """Turn one already-inlined attachment dict back into bytes."""
+    import base64
+    import binascii
+
+    name = str(item.get("filename") or "attachment.bin")
+    ctype = str(item.get("media_type") or "application/octet-stream")
+    b64 = item.get("content_base64")
+    if b64:
+        try:
+            return RawFile(
+                filename=name,
+                content=base64.b64decode(str(b64), validate=False),
+                content_type=ctype,
+            )
+        except (binascii.Error, ValueError):
+            return None
+    text = item.get("content")
+    if text:
+        return RawFile(
+            filename=name,
+            content=str(text).encode("utf-8", errors="replace"),
+            content_type=ctype or "text/plain",
+        )
+    return None
+
+
+def _inline_raw_files(request: ChatCompletionRequest) -> List[RawFile]:
+    """Attachments Open WebUI (or another client) embedded directly in the body."""
+    items = _last_user_attachments(request.messages)
+    items.extend(_request_level_files(request))
+    out: List[RawFile] = []
+    seen: set = set()
+    for item in items:
+        raw = _attachment_to_raw(item)
+        if not raw:
+            continue
+        key = (raw.filename, raw.size)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(raw)
     return out
 
 
@@ -438,7 +587,11 @@ def build_upstream_payload(
         payload: Dict[str, Any] = {
             "message": user_text or "(empty)",
         }
-        if unique_files:
+        # multipart agents receive the bytes as form parts instead — inlining
+        # them here as well would send every attachment twice.
+        if agent.files_style == "none":
+            unique_files = []
+        if unique_files and not agent.sends_raw_files:
             payload["files"] = unique_files
             # Also inline small text files into message so older agents still work
             inline_parts: List[str] = []
@@ -478,6 +631,7 @@ def build_upstream_payload(
             has_session_id=bool(payload.get("session_id")),
             has_chat_id=bool(chat_id),
             attachment_count=len(unique_files),
+            files_style=agent.files_style,
             message_len=len(payload.get("message") or ""),
             session_source=(
                 "header_or_body"
@@ -660,6 +814,85 @@ class AgentProxy:
             raise RuntimeError("AgentProxy not started")
         return self._client
 
+    async def collect_raw_files(
+        self,
+        request: ChatCompletionRequest,
+        agent: HermesAgent,
+    ) -> List[RawFile]:
+        """Resolve every attachment on the request to raw bytes.
+
+        Two sources: files Open WebUI kept in its own store (we hold only the
+        id and download the bytes) and files a client embedded in the body as
+        data: URLs.
+        """
+        # Multipart form parts only make sense for the message API — an
+        # OpenAI-style agent expects a JSON body with "messages".
+        if not agent.sends_raw_files or agent.api_style != "message":
+            return []
+
+        raw: List[RawFile] = []
+        refs = _openwebui_file_refs(request)
+        if refs:
+            client = get_file_client()
+            if not client:
+                logger.warning(
+                    "owui_file_refs_unresolved",
+                    agent_id=agent.id,
+                    count=len(refs),
+                    reason="OPENWEBUI_API_KEY / OPENWEBUI_BASE_URL not configured",
+                )
+            else:
+                for ref in refs:
+                    fetched = await client.fetch(
+                        ref["id"],
+                        fallback_name=ref.get("name", ""),
+                        fallback_type=ref.get("content_type", ""),
+                    )
+                    if fetched:
+                        raw.append(fetched)
+
+        seen = {(f.filename, f.size) for f in raw}
+        for inline in _inline_raw_files(request):
+            key = (inline.filename, inline.size)
+            if key not in seen:
+                seen.add(key)
+                raw.append(inline)
+        return raw
+
+    async def _post_upstream(
+        self,
+        agent: HermesAgent,
+        payload: Dict[str, Any],
+        raw_files: List[RawFile],
+        timeout: int,
+    ) -> httpx.Response:
+        """POST the payload — multipart when there are bytes to carry."""
+        if not raw_files:
+            return await self.client.post(
+                agent.chat_url,
+                json=payload,
+                headers=agent.auth_headers(),
+                timeout=timeout,
+            )
+
+        form: Dict[str, str] = {}
+        for key in ("message", "session_id", "chat_id", "reset_session"):
+            value = payload.get(key)
+            if value is None:
+                continue
+            form[key] = str(value).lower() if isinstance(value, bool) else str(value)
+
+        parts = [
+            ("file", (f.filename, f.content, f.content_type)) for f in raw_files
+        ]
+        return await self.client.post(
+            agent.chat_url,
+            data=form,
+            files=parts,
+            headers=agent.auth_headers(json_body=False),
+            timeout=timeout,
+        )
+
     async def complete(
         self,
         request: ChatCompletionRequest,
@@ -672,6 +905,11 @@ class AgentProxy:
             payload["stream"] = False
         timeout = agent.timeout or self.default_timeout
 
+        raw_files = await self.collect_raw_files(request, agent)
+        if raw_files and not str(payload.get("message") or "").strip("() "):
+            # Attachment with no question of its own.
+            payload["message"] = "Please analyze the attached file(s)."
+
         logger.info(
             "proxy_request",
             agent_id=agent.id,
@@ -679,18 +917,16 @@ class AgentProxy:
             stream=False,
             api_style=agent.api_style,
             url=agent.chat_url,
+            transport="multipart" if raw_files else "json",
+            raw_file_count=len(raw_files),
+            raw_file_bytes=sum(f.size for f in raw_files),
             has_session_id=bool(payload.get("session_id"))
             if agent.api_style == "message"
             else None,
         )
 
         try:
-            response = await self.client.post(
-                agent.chat_url,
-                json=payload,
-                headers=agent.auth_headers(),
-                timeout=timeout,
-            )
+            response = await self._post_upstream(agent, payload, raw_files, timeout)
         except httpx.TimeoutException as exc:
             logger.error("proxy_timeout", agent_id=agent.id, error=str(exc))
             raise AgentProxyError(

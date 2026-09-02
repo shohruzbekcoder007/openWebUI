@@ -33,6 +33,13 @@ class HermesAgent(BaseModel):
         default="openai",
         description="Upstream API style: openai | message",
     )
+    # inline:    embed attachment text into the message / JSON "files" list
+    # multipart: POST multipart/form-data with message= + file= (raw bytes)
+    # none:      drop attachments entirely
+    files_style: str = Field(
+        default="inline",
+        description="How attachments reach the agent: inline | multipart | none",
+    )
 
     @field_validator("base_url")
     @classmethod
@@ -56,18 +63,42 @@ class HermesAgent(BaseModel):
             return "openai"
         return style
 
+    @field_validator("files_style")
+    @classmethod
+    def normalize_files_style(cls, value: str) -> str:
+        style = (value or "inline").strip().lower()
+        if style in {"form", "form-data", "multipart/form-data", "raw"}:
+            return "multipart"
+        if style in {"off", "drop", "disabled"}:
+            return "none"
+        if style not in {"inline", "multipart", "none"}:
+            return "inline"
+        return style
+
+    @property
+    def sends_raw_files(self) -> bool:
+        """True when the agent wants raw bytes as multipart instead of inline text."""
+        return self.files_style == "multipart"
+
     @property
     def chat_url(self) -> str:
         """Full URL for chat completions."""
         return f"{self.base_url}{self.endpoint}"
 
-    def auth_headers(self) -> Dict[str, str]:
-        """Build outbound HTTP headers for the agent."""
+    def auth_headers(self, json_body: bool = True) -> Dict[str, str]:
+        """Build outbound HTTP headers for the agent.
+
+        With json_body=False no Content-Type is set, so httpx can generate the
+        multipart/form-data boundary itself.
+        """
         headers: Dict[str, str] = {
-            "Content-Type": "application/json",
             "Accept": "application/json",
             **self.headers,
         }
+        if json_body:
+            headers.setdefault("Content-Type", "application/json")
+        else:
+            headers.pop("Content-Type", None)
         if self.api_key:
             headers.setdefault("Authorization", f"Bearer {self.api_key}")
         return headers
@@ -85,6 +116,8 @@ class HermesAgent(BaseModel):
             "temperature": self.temperature,
             "timeout": self.timeout,
             "endpoint": self.endpoint,
+            "api_style": self.api_style,
+            "files_style": self.files_style,
             # base_url exposed without secrets for ops debugging
             "base_url": self.base_url,
         }
