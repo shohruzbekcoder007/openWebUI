@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
 import uuid
 from typing import Any, AsyncIterator, Dict, List, Mapping, Optional
@@ -37,6 +38,11 @@ OPENWEBUI_USER_ID_HEADERS = (
 )
 
 HeaderMap = Mapping[str, str]
+
+# Agents turn the user slug into a filesystem path (per-user hermes home), so it
+# must stay a single harmless path segment: no separators, no dot-only names.
+_USER_SLUG_ALLOWED = re.compile(r"[^a-z0-9._-]+")
+_USER_SLUG_MAX_LEN = 64
 
 
 def _message_to_dict(msg: ChatMessage) -> Dict[str, Any]:
@@ -477,6 +483,54 @@ def _header_value(headers: Optional[HeaderMap], *names: str) -> Optional[str]:
     return None
 
 
+def slugify_user_id(raw: Optional[str]) -> Optional[str]:
+    """Reduce an Open WebUI user id to one safe path segment.
+
+    An id that is already a clean slug — the normal case, since Open WebUI
+    hands us a lowercase uuid — passes through unchanged.
+
+    Anything else is rewritten and gets a digest of the original appended,
+    because the rewrite is lossy and two accounts must never land on the same
+    home directory: "a@b" and "a-b" both collapse to "a-b", and dropping
+    non-Latin letters can erase the entire difference between two names
+    ("Аliuser" and "Вliuser" would both become "li-ser").
+    """
+    if not raw:
+        return None
+    original = str(raw).strip()
+    if not original:
+        return None
+
+    candidate = _USER_SLUG_ALLOWED.sub("-", original.lower()).strip("-._")
+    if candidate == original and len(candidate) <= _USER_SLUG_MAX_LEN:
+        return candidate
+
+    digest = hashlib.sha256(original.encode("utf-8")).hexdigest()[:8]
+    stem = candidate[: _USER_SLUG_MAX_LEN - len(digest) - 1].strip("-._")
+    return f"{stem}-{digest}" if stem else f"user-{digest}"
+
+
+def resolve_user_slug(
+    request: ChatCompletionRequest,
+    headers: Optional[HeaderMap] = None,
+) -> Optional[str]:
+    """Sanitized id of the Open WebUI user behind this request.
+
+    Header first: Open WebUI sets X-OpenWebUI-User-Id from the authenticated
+    session (ENABLE_FORWARD_USER_INFO_HEADERS=true), while body fields are
+    whatever the caller typed.
+    """
+    meta = _metadata_dict(request)
+    extra = getattr(request, "model_extra", None) or {}
+    raw = _first_non_empty(
+        _header_value(headers, *OPENWEBUI_USER_ID_HEADERS),
+        meta.get("user_id"),
+        extra.get("user_id") if isinstance(extra, dict) else None,
+        request.user if isinstance(request.user, str) else None,
+    )
+    return slugify_user_id(raw)
+
+
 def conversation_fingerprint(request: ChatCompletionRequest) -> Optional[str]:
     """Stable fallback id when Open WebUI does not forward chat_id.
 
@@ -865,13 +919,14 @@ class AgentProxy:
         payload: Dict[str, Any],
         raw_files: List[RawFile],
         timeout: int,
+        user_id: Optional[str] = None,
     ) -> httpx.Response:
         """POST the payload — multipart when there are bytes to carry."""
         if not raw_files:
             return await self.client.post(
                 agent.chat_url,
                 json=payload,
-                headers=agent.auth_headers(),
+                headers=agent.auth_headers(user_id=user_id),
                 timeout=timeout,
             )
 
@@ -889,7 +944,7 @@ class AgentProxy:
             agent.chat_url,
             data=form,
             files=parts,
-            headers=agent.auth_headers(json_body=False),
+            headers=agent.auth_headers(json_body=False, user_id=user_id),
             timeout=timeout,
         )
 
@@ -910,9 +965,13 @@ class AgentProxy:
             # Attachment with no question of its own.
             payload["message"] = "Please analyze the attached file(s)."
 
+        user_slug = resolve_user_slug(request, headers)
+
         logger.info(
             "proxy_request",
             agent_id=agent.id,
+            user_slug=user_slug,
+            user_header=agent.user_header if user_slug else None,
             model=agent.model,
             stream=False,
             api_style=agent.api_style,
@@ -926,7 +985,9 @@ class AgentProxy:
         )
 
         try:
-            response = await self._post_upstream(agent, payload, raw_files, timeout)
+            response = await self._post_upstream(
+                agent, payload, raw_files, timeout, user_id=user_slug
+            )
         except httpx.TimeoutException as exc:
             logger.error("proxy_timeout", agent_id=agent.id, error=str(exc))
             raise AgentProxyError(
@@ -1003,6 +1064,7 @@ class AgentProxy:
         payload = build_upstream_payload(request, agent, headers=headers)
         payload["stream"] = True
         timeout = agent.timeout or self.default_timeout
+        user_slug = resolve_user_slug(request, headers)
 
         logger.info(
             "proxy_stream_start",
@@ -1010,6 +1072,7 @@ class AgentProxy:
             model=agent.model,
             api_style=agent.api_style,
             url=agent.chat_url,
+            user_slug=user_slug,
         )
 
         try:
@@ -1018,7 +1081,7 @@ class AgentProxy:
                 agent.chat_url,
                 json=payload,
                 headers={
-                    **agent.auth_headers(),
+                    **agent.auth_headers(user_id=user_slug),
                     "Accept": "text/event-stream",
                 },
                 timeout=timeout,

@@ -14,6 +14,7 @@ from app.services.proxy import (
     enrich_request_ids_from_headers,
     resolve_chat_id,
     resolve_session_id,
+    resolve_user_slug,
 )
 from app.services.rate_limit import rate_limiter
 from app.utils.logging import get_logger
@@ -104,6 +105,7 @@ async def chat_completions(
             resolve_session_id(body, request.headers, allow_fingerprint=True)
         ),
         resolved_chat_id=bool(resolve_chat_id(body, request.headers)),
+        user_slug=resolve_user_slug(body, request.headers),
     )
 
     if want_stream:

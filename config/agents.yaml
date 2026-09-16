@@ -98,6 +98,33 @@ agents:
     stream: true
     temperature: 0.2
 
+  - id: methodology
+    name: Metodologiya agenti
+    description: "Metodologiya agenti: statistika metodologiyasi hujjatlari bo'yicha savol-javob va tahlil."
+    avatar: "📐"
+    system_prompt: |
+      You are Metodologiya agenti, a statistical methodology assistant.
+      You answer questions about methodological documents, classifications,
+      indicators and calculation procedures, and you stay precise and
+      source-faithful.
+    base_url: "${HERMES_METHODOLOGY_BASE_URL:-http://mock-agent:9010}"
+    endpoint: "/v1/chat"
+    # The methodology agent expects {"message":"...","session_id":"..."} not OpenAI chat.completions
+    api_style: message
+    # /v1/chat also takes multipart: message= + session_id= + file=
+    # Gateway downloads the raw bytes from Open WebUI and posts them as form parts,
+    # so the agent's own document tools see the original file.
+    files_style: multipart
+    headers: {}
+    api_key: "${HERMES_METHODOLOGY_API_KEY:-}"
+    model: "${HERMES_METHODOLOGY_MODEL:-methodology-default}"
+    enabled: true
+    # Like press reliz, a document goes through extraction and a large model
+    # before the first token, which runs well past the 120s the others use.
+    timeout: "${HERMES_METHODOLOGY_TIMEOUT:-900}"
+    stream: true
+    temperature: 0.2
+
   - id: programmer
     name: Programmer
     description: "Software engineering, architecture, debugging, and code review."

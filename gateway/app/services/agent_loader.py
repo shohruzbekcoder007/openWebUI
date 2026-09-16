@@ -18,6 +18,10 @@ logger = get_logger(__name__)
 # Matches ${VAR} or ${VAR:-default}
 _ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 
+# Bearer token sent to every agent that has no api_key of its own. Lets one
+# shared secret cover the whole fleet instead of seven HERMES_*_API_KEY entries.
+_SHARED_TOKEN_ENV = "HERMES_AGENT_TOKEN"
+
 
 def _expand_env(value: str) -> str:
     """Expand ${VAR} and ${VAR:-default} placeholders in strings."""
@@ -96,9 +100,11 @@ class AgentRegistry:
 
         for entry in agents_raw:
             merged = {**defaults, **entry}
-            # Empty api_key string -> None
-            if merged.get("api_key") == "":
-                merged["api_key"] = None
+            # Empty api_key string -> None, then fall back to the shared token
+            if not (merged.get("api_key") or "").strip():
+                merged["api_key"] = (
+                    os.environ.get(_SHARED_TOKEN_ENV) or ""
+                ).strip() or None
             try:
                 agent = HermesAgent.model_validate(merged)
             except Exception as exc:

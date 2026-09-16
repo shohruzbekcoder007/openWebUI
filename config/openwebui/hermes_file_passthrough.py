@@ -63,7 +63,7 @@ class Filter:
             description="Filter execution order (lower runs first).",
         )
         model_ids: str = Field(
-            default="press_reliz",
+            default="press_reliz,methodology",
             description=(
                 "Comma-separated model ids this filter acts on. Every other "
                 "model is passed through untouched, so the filter is safe to "

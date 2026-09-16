@@ -40,6 +40,12 @@ class HermesAgent(BaseModel):
         default="inline",
         description="How attachments reach the agent: inline | multipart | none",
     )
+    # Header that carries the Open WebUI user slug upstream. Agents use it to
+    # pick a per-user home directory (set_hermes_home_override). Empty disables.
+    user_header: str = Field(
+        default="X-User-Id",
+        description="Outbound header for the Open WebUI user slug ('' disables)",
+    )
 
     @field_validator("base_url")
     @classmethod
@@ -75,6 +81,11 @@ class HermesAgent(BaseModel):
             return "inline"
         return style
 
+    @field_validator("user_header")
+    @classmethod
+    def normalize_user_header(cls, value: str) -> str:
+        return (value or "").strip()
+
     @property
     def sends_raw_files(self) -> bool:
         """True when the agent wants raw bytes as multipart instead of inline text."""
@@ -85,11 +96,18 @@ class HermesAgent(BaseModel):
         """Full URL for chat completions."""
         return f"{self.base_url}{self.endpoint}"
 
-    def auth_headers(self, json_body: bool = True) -> Dict[str, str]:
+    def auth_headers(
+        self,
+        json_body: bool = True,
+        user_id: Optional[str] = None,
+    ) -> Dict[str, str]:
         """Build outbound HTTP headers for the agent.
 
         With json_body=False no Content-Type is set, so httpx can generate the
         multipart/form-data boundary itself.
+
+        user_id is the sanitized Open WebUI user slug (see proxy.resolve_user_slug);
+        it is sent as user_header so the agent can isolate per-user state.
         """
         headers: Dict[str, str] = {
             "Accept": "application/json",
@@ -101,6 +119,8 @@ class HermesAgent(BaseModel):
             headers.pop("Content-Type", None)
         if self.api_key:
             headers.setdefault("Authorization", f"Bearer {self.api_key}")
+        if user_id and self.user_header:
+            headers.setdefault(self.user_header, user_id)
         return headers
 
     def to_public_dict(self) -> Dict[str, Any]:
