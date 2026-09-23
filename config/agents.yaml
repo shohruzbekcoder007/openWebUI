@@ -125,6 +125,26 @@ agents:
     stream: true
     temperature: 0.2
 
+  - id: unstat
+    name: UNSTAT
+    description: "UNSTAT agenti: BMT statistika standartlari va ma'lumotlari bo'yicha savol-javob."
+    avatar: "🇺🇳"
+    system_prompt: |
+      You are UNSTAT Hermes, an assistant for United Nations statistical
+      standards, classifications and data. You answer precisely and stay
+      faithful to the sources.
+    base_url: "${HERMES_UNSTAT_BASE_URL:-http://mock-agent:9010}"
+    endpoint: "/v1/chat"
+    # The UNSTAT agent expects {"message":"...","session_id":"..."} not OpenAI chat.completions
+    api_style: message
+    headers: {}
+    api_key: "${HERMES_UNSTAT_API_KEY:-}"
+    model: "${HERMES_UNSTAT_MODEL:-unstat-default}"
+    enabled: true
+    timeout: 120
+    stream: true
+    temperature: 0.3
+
   - id: programmer
     name: Programmer
     description: "Software engineering, architecture, debugging, and code review."
